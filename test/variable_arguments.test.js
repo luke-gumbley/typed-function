@@ -149,4 +149,37 @@ describe('variable arguments', function () {
     }, /SyntaxError: Unexpected variable arguments operator "..."/);
   });
 
+  it('should correctly handle overlapping function definitions', function() {
+    var fn = typed({
+      '...number|string': function () {
+        return 'one';
+      },
+      '...string|Array': function () {
+        return 'two';
+      }
+    });
+
+    assert.equal(fn(1,1), 'one');
+    assert.equal(fn('a',1), 'one');
+    assert.equal(fn('a',[]), 'two');
+    assert.equal(fn([],[]), 'two');
+  });
+
+  it('should correctly handle overlapping function definitions (mixed)', function() {
+    var fn = typed({
+      'string': function () {
+        return 'one';
+      },
+      '...string|Array': function () {
+        return 'two';
+      }
+    });
+
+    assert.equal(fn('a'), 'one');
+    assert.equal(fn([]), 'two');
+    assert.equal(fn('a','a'), 'two');
+    assert.equal(fn('a',[]), 'two');
+    assert.equal(fn([],[]), 'two');
+  });
+
 });
