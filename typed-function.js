@@ -193,10 +193,11 @@
      * A function parameter
      * @param {string | string[] | Param} types    A parameter type like 'string',
      *                                             'number | boolean'
+     * @param {number} [index=undefined]           Index in the original signature (needed for varArgs)
      * @param {boolean} [varArgs=false]            Variable arguments if true
      * @constructor
      */
-    function Param(types, varArgs) {
+    function Param(types, index, varArgs) {
       // parse the types, can be a string with types separated by pipe characters |
       if (typeof types === 'string') {
         // parse variable arguments operator (ellipses '...number')
@@ -228,6 +229,8 @@
       // can hold a type to which to convert when handling this parameter
       this.conversions = [];
       // TODO: implement better API for conversions, be able to add conversions via constructor (support a new type Object?)
+
+      this.index = index;
 
       // variable arguments
       this.varArgs = _varArgs || varArgs || false;
@@ -315,10 +318,10 @@
         : this.types.filter(function(type) { return !contains(other.types, type); });
 
       return this.varArgs ^ other.varArgs
-        // varArgs trumps non-varArgs, filter only one-way
-        ? new Param(this.varArgs ? this.types : types, this.varArgs)
+        // filter only one-way if this is a satisfied varArg signature
+        ? new Param((this.varArgs && this.index < other.index) ? this.types : types, this.index, this.varArgs)
         // where both are equivalent, filter as normal
-        : new Param(types, this.varArgs);
+        : new Param(types, this.index, this.varArgs);
     };
 
     /**
@@ -331,7 +334,9 @@
       var types = contains(this.types, 'any')
         ? other.types
         : this.types.filter(function(type) { return contains(other.types, 'any') || contains(other.types, type); })
-      return new Param(types, this.varArgs && other.varArgs);
+
+      // index should always be the later of the two.
+      return new Param(types, Math.max(this.index || 0, other.index || 0), this.varArgs && other.varArgs);
     };
 
     /**
@@ -339,7 +344,7 @@
      * @returns {Param} Returns a cloned version of this param
      */
     Param.prototype.clone = function () {
-      var param = new Param(this.types.slice(), this.varArgs);
+      var param = new Param(this.types.slice(), this.index, this.varArgs);
       param.conversions = this.conversions.slice();
       return param;
     };
@@ -415,7 +420,7 @@
 
       this.params = new Array(_params.length);
       for (var i = 0; i < _params.length; i++) {
-        var param = new Param(_params[i]);
+        var param = new Param(_params[i], i);
         this.params[i] = param;
         if (i === _params.length - 1) {
           // the last argument
@@ -495,14 +500,14 @@
           else {
             // split each type in the parameter
             for (i = 0; i < param.types.length; i++) {
-              recurse(signature, path.concat(new Param(param.types[i])));
+              recurse(signature, path.concat(new Param(param.types[i], param.index)));
             }
 
             // recurse for all conversions
             for (i = 0; i < typed.conversions.length; i++) {
               conversion = typed.conversions[i];
               if (!contains(param.types, conversion.from) && contains(param.types, conversion.to)) {
-                newParam = new Param(conversion.from);
+                newParam = new Param(conversion.from, param.index);
                 newParam.conversions[0] = conversion;
                 recurse(signature, path.concat(newParam));
               }
@@ -669,12 +674,12 @@
                 this.param);
 
         // non-root node (path is non-empty)
-        if (this.param.varArgs) {
+        if (this.param.varArgs && index > this.param.index) {
           if (this.param.anyType) {
             // variable arguments with any type
-            code.push(prefix + 'if (arguments.length > ' + index + ') {');
+            code.push(prefix + 'if (arguments.length > ' + this.param.index + ') {');
             code.push(prefix + '  var varArgs = [];');
-            code.push(prefix + '  for (var i = ' + index + '; i < arguments.length; i++) {');
+            code.push(prefix + '  for (var i = ' + this.param.index + '; i < arguments.length; i++) {');
             code.push(prefix + '    varArgs.push(arguments[i]);');
             code.push(prefix + '  }');
             code.push(this.signature.toCode(refs, prefix + '  '));
@@ -698,26 +703,33 @@
               }
             }
 
-            code.push(prefix + 'if (' + getTests(allTypes, 'arg' + index) + ') { ' + comment);
-            code.push(prefix + '  var varArgs = [arg' + index + '];');
-            code.push(prefix + '  for (var i = ' + (index + 1) + '; i < arguments.length; i++) {');
-            code.push(prefix + '    if (' + getTests(exactTypes, 'arguments[i]') + ') {');
-            code.push(prefix + '      varArgs.push(arguments[i]);');
+            var args = []
+            for (var i = this.param.index; i < index; i++) {
+              args.push('arg' + i);
+            }
+
+            code.push(prefix + 'var varArgs = [' + args.join(',') + '];');
+            code.push(prefix + 'for (var i = ' + index + '; i < arguments.length; i++) {');
+            code.push(prefix + '  if (' + getTests(exactTypes, 'arguments[i]') + ') {');
+            code.push(prefix + '    varArgs.push(arguments[i]);');
 
             for (var i = 0; i < allTypes.length; i++) {
               var conversion_i = this.param.conversions[i];
               if (conversion_i) {
                 var test = refs.add(getTypeTest(allTypes[i]), 'test');
                 var convert = refs.add(conversion_i.convert, 'convert');
-                code.push(prefix + '    }');
-                code.push(prefix + '    else if (' + test + '(arguments[i])) {');
-                code.push(prefix + '      varArgs.push(' + convert + '(arguments[i]));');
+                code.push(prefix + '  }');
+                code.push(prefix + '  else if (' + test + '(arguments[i])) {');
+                code.push(prefix + '    varArgs.push(' + convert + '(arguments[i]));');
               }
             }
-            code.push(prefix + '    } else {');
-            code.push(prefix + '      throw createError(name, arguments.length, i, arguments[i], \'' + exactTypes.join(',') + '\');');
-            code.push(prefix + '    }');
+            code.push(prefix + '  } else {');
+            code.push(prefix + (fallThrough
+              ? '    break;'
+              : '    throw createError(name, arguments.length, i, arguments[i], \'' + exactTypes.join(',') + '\');'));
             code.push(prefix + '  }');
+            code.push(prefix + '}');
+            code.push(prefix + 'if (varArgs.length === arguments.length - ' + this.param.index + ') {');
             code.push(this.signature.toCode(refs, prefix + '  '));
             code.push(prefix + '}');
           }
@@ -730,10 +742,11 @@
           }
           else {
             // regular type
-            var type = this.param.types[0];
-            var test = type !== 'any' ? refs.add(getTypeTest(type), 'test') : null;
+            var test = this.param.types
+              .map(function(type) { return refs.add(getTypeTest(type), 'test') + '(arg' + index + ')'; })
+              .join(' || ');
 
-            code.push(prefix + 'if (' + test + '(arg' + index + ')) { ' + comment);
+            code.push(prefix + 'if (' + test + ') { ' + comment);
             code.push(this._innerCode(refs, prefix + '  ', fallThrough));
             code.push(prefix + '}');
           }
@@ -760,7 +773,7 @@
       var code = [];
       var i;
 
-      if (this.signature) {
+      if (this.signature && !this.signature.varArgs) {
         code.push(prefix + 'if (arguments.length === ' + this.path.length + ') {');
         code.push(this.signature.toCode(refs, prefix + '  '));
         code.push(prefix + '}');
@@ -769,16 +782,21 @@
       var exceptions = [];
 
       var last = this.childs.length - 1;
+      var anyVar;
+      if(this.childs.every(function(c, i) { anyVar = i; return !c.param.varArgs || !c.param.anyType; }))
+        anyVar = -1;
 
       this.childs.forEach(function(child, index) {
         // don't throw exceptions in an 'any' child node unless it's the last node
-        var skip = child.param.anyType && index < last;
-        code.push(child.toCode(refs, prefix, fallThrough || skip));
+        var skipAny = child.param.anyType && index < last;
+          // don't throw exceptions in a varArgs node unless it's after the any/varArgs node (if present)
+        var skipVar = child.param.varArgs && index < anyVar;
+        code.push(child.toCode(refs, prefix, fallThrough || skipAny || skipVar));
         // if a child is skipped, its exceptions precede those of this node
-        if(skip) exceptions.push(child._exceptions(refs, prefix));
+        if(skipAny) exceptions.push(child._exceptions(refs, prefix));
       });
 
-      if (!fallThrough) {
+      if (!fallThrough && (!this.signature || !this.signature.varArgs)) {
         code = code.concat(exceptions, this._exceptions(refs, prefix));
       }
 
