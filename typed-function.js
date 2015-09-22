@@ -317,11 +317,11 @@
         ? contains(this.types, 'any') ? this.types : []
         : this.types.filter(function(type) { return !contains(other.types, type); });
 
-      return this.varArgs ^ other.varArgs
-        // filter only one-way if this is a satisfied varArg signature
-        ? new Param((this.varArgs && this.index < other.index) ? this.types : types, this.index, this.varArgs)
-        // where both are equivalent, filter as normal
-        : new Param(types, this.index, this.varArgs);
+      return this.varArgs
+        // if this is a varArg param, no filtering is performed.
+        ? this
+        // where this is not varArgs, filter as normal
+        : new Param(types, this.index, false);
     };
 
     /**
@@ -336,7 +336,10 @@
         : this.types.filter(function(type) { return contains(other.types, 'any') || contains(other.types, type); })
 
       // index should always be the later of the two.
-      return new Param(types, Math.max(this.index || 0, other.index || 0), this.varArgs && other.varArgs);
+      var index = Math.max(this.index, other.index)
+      return this.varArgs && other.varArgs
+        ? new Param([], index, false)
+        : new Param(types, index, false);
     };
 
     /**
@@ -443,11 +446,16 @@
      * @return {Param} Returns the parameter at that index, or the last parameter if varArgs is true
      */
     Signature.prototype.getParam = function(index) {
-      return index < this.params.length
-        ? this.params[index]
-        : this.varArgs
-          ? this.params[this.params.length - 1]
-          : undefined;
+      // retrieve the specified parameter or the last parameter if varArgs has been specified
+      var param = this.params[index] || (this.varArgs && this.params[this.params.length - 1]) || undefined;
+
+      // for the special case of the first varArgs argument, duplicate but set varArgs to false
+      if(param && param.varArgs && index === param.index) {
+        param = param.clone();
+        param.varArgs = false;
+      }
+
+      return param;
     };
 
     /**
@@ -674,7 +682,7 @@
                 this.param);
 
         // non-root node (path is non-empty)
-        if (this.param.varArgs && index > this.param.index) {
+        if (this.param.varArgs) {
           if (this.param.anyType) {
             // variable arguments with any type
             code.push(prefix + 'if (arguments.length > ' + this.param.index + ') {');
@@ -782,21 +790,16 @@
       var exceptions = [];
 
       var last = this.childs.length - 1;
-      var anyVar;
-      if(this.childs.every(function(c, i) { anyVar = i; return !c.param.varArgs || !c.param.anyType; }))
-        anyVar = -1;
 
       this.childs.forEach(function(child, index) {
-        // don't throw exceptions in an 'any' child node unless it's the last node
-        var skipAny = child.param.anyType && index < last;
-          // don't throw exceptions in a varArgs node unless it's after the any/varArgs node (if present)
-        var skipVar = child.param.varArgs && index < anyVar;
-        code.push(child.toCode(refs, prefix, fallThrough || skipAny || skipVar));
+        // don't throw exceptions in 'any' or varArgs children unless they're the last node
+        var skip = (child.param.anyType || child.param.varArgs) && index < last;
+        code.push(child.toCode(refs, prefix, fallThrough || skip));
         // if a child is skipped, its exceptions precede those of this node
-        if(skipAny) exceptions.push(child._exceptions(refs, prefix));
+        if(skip) exceptions.push(child._exceptions(refs, prefix));
       });
 
-      if (!fallThrough && (!this.signature || !this.signature.varArgs)) {
+      if (!fallThrough) {
         code = code.concat(exceptions, this._exceptions(refs, prefix));
       }
 
