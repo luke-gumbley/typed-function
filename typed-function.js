@@ -685,13 +685,11 @@
         if (this.param.varArgs) {
           if (this.param.anyType) {
             // variable arguments with any type
-            code.push(prefix + 'if (arguments.length > ' + this.param.index + ') {');
-            code.push(prefix + '  var varArgs = [];');
-            code.push(prefix + '  for (var i = ' + this.param.index + '; i < arguments.length; i++) {');
-            code.push(prefix + '    varArgs.push(arguments[i]);');
-            code.push(prefix + '  }');
-            code.push(this.signature.toCode(refs, prefix + '  '));
+            code.push(prefix + 'var varArgs = [];');
+            code.push(prefix + 'for (var i = ' + this.param.index + '; i < arguments.length; i++) {');
+            code.push(prefix + '  varArgs.push(arguments[i]);');
             code.push(prefix + '}');
+            code.push(this.signature.toCode(refs, prefix));
           }
           else {
             // variable arguments with a fixed type
@@ -732,9 +730,12 @@
               }
             }
             code.push(prefix + '  } else {');
+
+            var exception = 'createError(name, arguments.length, i, arguments[i], \'' + exactTypes.join(',') + '\');';
             code.push(prefix + (fallThrough
-              ? '    break;'
-              : '    throw createError(name, arguments.length, i, arguments[i], \'' + exactTypes.join(',') + '\');'));
+              ? '    exception = exception || ' + exception + '\n' + prefix + '    break;'
+              : '    throw exception || ' + exception));
+
             code.push(prefix + '  }');
             code.push(prefix + '}');
             code.push(prefix + 'if (varArgs.length === arguments.length - ' + this.param.index + ') {');
@@ -746,7 +747,9 @@
           if (this.param.anyType) {
             // any type
             code.push(prefix + '// type: any');
-            code.push(this._innerCode(refs, prefix, fallThrough));
+            code.push(prefix + 'if (arguments.length > ' + index + ') {');
+            code.push(this._innerCode(refs, prefix + '  ', fallThrough));
+            code.push(prefix + '}');
           }
           else {
             // regular type
@@ -787,21 +790,15 @@
         code.push(prefix + '}');
       }
 
-      var exceptions = [];
-
       var last = this.childs.length - 1;
 
       this.childs.forEach(function(child, index) {
         // don't throw exceptions in 'any' or varArgs children unless they're the last node
         var skip = (child.param.anyType || child.param.varArgs) && index < last;
         code.push(child.toCode(refs, prefix, fallThrough || skip));
-        // if a child is skipped, its exceptions precede those of this node
-        if(skip) exceptions.push(child._exceptions(refs, prefix));
       });
 
-      if (!fallThrough) {
-        code = code.concat(exceptions, this._exceptions(refs, prefix));
-      }
+      code = code.concat(this._exceptions(refs, prefix, fallThrough));
 
       return code.join('\n');
     };
@@ -813,14 +810,15 @@
      * @returns {string} Returns the inner code as string
      * @private
      */
-    Node.prototype._exceptions = function (refs, prefix) {
+    Node.prototype._exceptions = function (refs, prefix, fallThrough) {
       var index = this.path.length;
 
       if (this.childs.length === 0) {
         // TODO: can this condition be simplified? (we have a fall-through here)
+        var exception = 'createError(name, arguments.length, ' + index + ', arguments[' + index + ']);'
         return [
           prefix + 'if (arguments.length > ' + index + ') {',
-          prefix + '  throw createError(name, arguments.length, ' + index + ', arguments[' + index + ']);',
+          prefix + '  ' + (fallThrough ? 'exception = exception || ' : 'throw exception || ') + exception,
           prefix + '}'
         ].join('\n');
       }
@@ -840,8 +838,8 @@
             }
           }
         }
-
-        return prefix + 'throw createError(name, arguments.length, ' + index + ', arguments[' + index + '], \'' + types.join(',') + '\');';
+        var exception = 'createError(name, arguments.length, ' + index + ', arguments[' + index + '], \'' + types.join(',') + '\');';
+        return prefix + (fallThrough ? 'exception = exception || ' : 'throw exception || ') + exception;
       }
     };
 
@@ -1074,6 +1072,7 @@
       code.push('function ' + _name + '(' + _args.join(', ') + ') {');
       code.push('  "use strict";');
       code.push('  var name = \'' + _name + '\';');
+      code.push('  var exception;');
       code.push(node.toCode(refs, '  '));
       code.push('}');
 
