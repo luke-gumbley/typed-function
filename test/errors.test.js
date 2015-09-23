@@ -70,24 +70,6 @@ describe('errors', function () {
     }, /Error: Signature "string" is defined twice/);
   });
 
-  it('should give correct error in case of conflicting union arguments (2)', function() {
-    assert.throws(function () {
-      var fn = typed({
-        '...string | number': function () {},
-        '...string': function () {}
-      });
-    }, /Error: Conflicting types "...string|number" and "...string"/);
-  });
-
-  it('should give correct error in case of conflicting variable args', function() {
-    assert.throws(function () {
-      var fn = typed({
-        '...string': function () {},
-        'string': function () {}
-      });
-    }, /Error: Conflicting types "...string" and "string"/);
-  });
-
   it('should give correct error in case of wrong type of argument (varArgs)', function() {
     var fn = typed({'...number': function () {}});
 
