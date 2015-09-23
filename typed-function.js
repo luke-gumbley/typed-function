@@ -308,6 +308,18 @@
     };
 
     /**
+     * Return the conversion for the specified type, if present.
+     * @param {string} [type] specifies the source type of the conversion required
+     * @return {Object} Returns an object specifying the requested conversion, or undefined
+     */
+    Param.prototype.getConversion = function (type) {
+      var conversion;
+      return this.conversions.every(function(c) { conversion = c; return c.from !== type; })
+        ? undefined
+        : conversion;
+    }
+
+    /**
      * Return a new param based on this param excluding another
      * @param {Param} other
      * @return {Param} Returns a param representing the types in this param that are not in the other
@@ -390,7 +402,7 @@
       var keys = {};
 
       for (var i = 0; i < this.types.length; i++) {
-        var conversion = this.conversions[i];
+        var conversion = this.getConversion(this.types[i]);
         var type = toConversion && conversion ? conversion.to : this.types[i];
         if (!(type in keys)) {
           keys[type] = true;
@@ -621,7 +633,7 @@
       var args = new Array(this.params.length);
       for (var i = 0; i < this.params.length; i++) {
         var param = this.params[i];
-        var conversion = param.conversions[0];
+        var conversion = param.getConversion(param.types[0]);
         if (param.varArgs) {
           args[i] = 'varArgs';
         }
@@ -676,7 +688,7 @@
 
       if (this.param) {
         var index = this.path.length - 1;
-        var conversion = this.param.conversions[0];
+        var conversion = this.param.getConversion(this.param.types[0]);
         var comment = '// type: ' + (conversion ?
                 (conversion.from + ' (convert to ' + conversion.to + ')') :
                 this.param);
@@ -704,7 +716,7 @@
             var allTypes = this.param.types;
             var exactTypes = [];
             for (var i = 0; i < allTypes.length; i++) {
-              if (this.param.conversions[i] === undefined) {
+              if (this.param.getConversion(allTypes[i]) === undefined) {
                 exactTypes.push(allTypes[i]);
               }
             }
@@ -720,7 +732,7 @@
             code.push(prefix + '    varArgs.push(arguments[i]);');
 
             for (var i = 0; i < allTypes.length; i++) {
-              var conversion_i = this.param.conversions[i];
+              var conversion_i = this.param.getConversion(allTypes[i]);
               if (conversion_i) {
                 var test = refs.add(getTypeTest(allTypes[i]), 'test');
                 var convert = refs.add(conversion_i.convert, 'convert');
@@ -831,7 +843,7 @@
           if (node.param) {
             for (var j = 0; j < node.param.types.length; j++) {
               var type = node.param.types[j];
-              if (!(type in keys) && !node.param.conversions[j]) {
+              if (!(type in keys) && !node.param.getConversion(type)) {
                 keys[type] = true;
                 types.push(type);
               }
@@ -899,40 +911,6 @@
       signatures.sort(function (a, b) {
         return Signature.compare(a, b);
       });
-
-      // filter redundant conversions from signatures with varArgs
-      // TODO: simplify this loop or move it to a separate function
-      for (i = 0; i < signatures.length; i++) {
-        signature = signatures[i];
-
-        if (signature.varArgs) {
-          var index = signature.params.length - 1;
-          var param = signature.params[index];
-
-          var t = 0;
-          while (t < param.types.length) {
-            if (param.conversions[t]) {
-              var type = param.types[t];
-
-              for (var j = 0; j < signatures.length; j++) {
-                var other = signatures[j];
-                var p = other.params[index];
-
-                if (other !== signature &&
-                    p &&
-                    contains(p.types, type) && !p.conversions[index]) {
-                  // this (conversion) type already exists, remove it
-                  param.types.splice(t, 1);
-                  param.conversions.splice(t, 1);
-                  t--;
-                  break;
-                }
-              }
-            }
-            t++;
-          }
-        }
-      }
 
       return signatures;
     }
