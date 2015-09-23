@@ -197,7 +197,7 @@
      * @param {boolean} [varArgs=false]            Variable arguments if true
      * @constructor
      */
-    function Param(types, index, varArgs) {
+    function Param(types, conversions, index, varArgs) {
       // parse the types, can be a string with types separated by pipe characters |
       if (typeof types === 'string') {
         // parse variable arguments operator (ellipses '...number')
@@ -226,9 +226,8 @@
         throw new Error('String or Array expected');
       }
 
-      // can hold a type to which to convert when handling this parameter
-      this.conversions = [];
-      // TODO: implement better API for conversions, be able to add conversions via constructor (support a new type Object?)
+      // can hold types to which to convert when handling this parameter
+      this.conversions = conversions;
 
       this.index = index;
 
@@ -329,11 +328,14 @@
         ? contains(this.types, 'any') ? this.types : []
         : this.types.filter(function(type) { return !contains(other.types, type); });
 
+      // trim conversions to only those relevant for the remaining types
+      var conversions = this.conversions.filter(function(c) { return contains(types, c.from); });
+
       return this.varArgs
         // if this is a varArg param, no filtering is performed.
         ? this
         // where this is not varArgs, filter as normal
-        : new Param(types, this.index, false);
+        : new Param(types, conversions, this.index, false);
     };
 
     /**
@@ -347,11 +349,16 @@
         ? other.types
         : this.types.filter(function(type) { return contains(other.types, 'any') || contains(other.types, type); })
 
+      // conversions in the intersection are only required where they were required for both source params.
+      var conversions = types
+        .map(function(type) { return this.getConversion(type) && other.getConversion(type); }, this)
+        .filter(function(c) { return c; });
+
       // index should always be the later of the two.
       var index = Math.max(this.index, other.index)
       return this.varArgs && other.varArgs
-        ? new Param([], index, false)
-        : new Param(types, index, false);
+        ? new Param([], [], index, false)
+        : new Param(types, conversions, index, false);
     };
 
     /**
@@ -359,8 +366,7 @@
      * @returns {Param} Returns a cloned version of this param
      */
     Param.prototype.clone = function () {
-      var param = new Param(this.types.slice(), this.index, this.varArgs);
-      param.conversions = this.conversions.slice();
+      var param = new Param(this.types.slice(), this.conversions.slice(), this.index, this.varArgs);
       return param;
     };
 
@@ -435,7 +441,7 @@
 
       this.params = new Array(_params.length);
       for (var i = 0; i < _params.length; i++) {
-        var param = new Param(_params[i], i);
+        var param = new Param(_params[i], [], i);
         this.params[i] = param;
         if (i === _params.length - 1) {
           // the last argument
@@ -520,15 +526,14 @@
           else {
             // split each type in the parameter
             for (i = 0; i < param.types.length; i++) {
-              recurse(signature, path.concat(new Param(param.types[i], param.index)));
+              recurse(signature, path.concat(new Param(param.types[i], [], param.index)));
             }
 
             // recurse for all conversions
             for (i = 0; i < typed.conversions.length; i++) {
               conversion = typed.conversions[i];
               if (!contains(param.types, conversion.from) && contains(param.types, conversion.to)) {
-                newParam = new Param(conversion.from, param.index);
-                newParam.conversions[0] = conversion;
+                newParam = new Param(conversion.from, [conversion], param.index);
                 recurse(signature, path.concat(newParam));
               }
             }
