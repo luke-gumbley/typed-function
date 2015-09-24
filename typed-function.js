@@ -241,69 +241,19 @@
     /**
      * Order Params
      * any type ('any') will be ordered last, and object as second last (as other
-     * types may be an object as well, like Array).
+     * types may be an object as well: Array, Date, RegExp).
      *
      * @param {Param} a
      * @param {Param} b
      * @returns {number} Returns 1 if a > b, -1 if a < b, and else 0.
      */
     Param.compare = function (a, b) {
-      // TODO: simplify parameter comparison, it's a mess
-      if (a.anyType) return 1;
-      if (b.anyType) return -1;
-
-      if (contains(a.types, 'Object')) return 1;
-      if (contains(b.types, 'Object')) return -1;
-
-      if (a.hasConversions()) {
-        if (b.hasConversions()) {
-          var i, ac, bc;
-
-          for (i = 0; i < a.conversions.length; i++) {
-            if (a.conversions[i] !== undefined) {
-              ac = a.conversions[i];
-              break;
-            }
-          }
-
-          for (i = 0; i < b.conversions.length; i++) {
-            if (b.conversions[i] !== undefined) {
-              bc = b.conversions[i];
-              break;
-            }
-          }
-
-          return typed.conversions.indexOf(ac) - typed.conversions.indexOf(bc);
-        }
-        else {
-          return 1;
-        }
-      }
-      else {
-        if (b.hasConversions()) {
-          return -1;
-        }
-        else {
-          // both params have no conversions
-          var ai, bi;
-
-          for (i = 0; i < typed.types.length; i++) {
-            if (typed.types[i].name === a.types[0]) {
-              ai = i;
-              break;
-            }
-          }
-
-          for (i = 0; i < typed.types.length; i++) {
-            if (typed.types[i].name === b.types[0]) {
-              bi = i;
-              break;
-            }
-          }
-
-          return ai - bi;
-        }
-      }
+      return compare(a.anyType, b.anyType)
+        || compare(contains(a.types, 'Object'), contains(b.types, 'Object'))
+        || compare(a.conversionCount(), b.conversionCount())
+        || compare(a.types.length, b.types.length)
+        || compare(a.conversionOrder(), b.conversionOrder())
+        || compare(a.typeOrder(), b.typeOrder());
     };
 
     /**
@@ -316,6 +266,35 @@
       return this.conversions.every(function(c) { conversion = c; return c.from !== type; })
         ? undefined
         : conversion;
+    }
+
+    /**
+     * Return the number of conversions.
+     * @return {number} Returns the number of conversions specified in this param.
+     */
+    Param.prototype.conversionCount = function () {
+      return this.conversions.filter(function(c) { return c; }).length;
+    }
+
+    /**
+     * Calculate the sum of the indices of these conversions in typed.conversions
+     * Used in Param / Signature sorting and comparisons.
+     *
+     * @return {number} Returns the sum of conversion indices
+     */
+    Param.prototype.conversionOrder = function () {
+      return this.conversions.reduce(function(total, c) { return total + (c && typed.conversions.indexOf(c) || 0); }, 0);
+    }
+
+    /**
+     * Calculate the sum of the indices of these types in typed.types
+     * Used in Param / Signature sorting and comparisons.
+     *
+     * @return {number} Returns the sum of type indices
+     */
+    Param.prototype.typeOrder = function () {
+      var types = typed.types.map(function(t) { return t.name; });
+      return this.types.reduce(function(total, t) { return total + types.indexOf(t); }, 0);
     }
 
     /**
@@ -565,21 +544,14 @@
       if (a.params.length > b.params.length) return -varArgs;
       if (a.params.length < b.params.length) return varArgs;
 
-      // count the number of conversions
-      var i;
-      var len = a.params.length; // a and b have equal amount of params
-      var ac = 0;
-      var bc = 0;
-      for (i = 0; i < len; i++) {
-        if (a.params[i].hasConversions()) ac++;
-        if (b.params[i].hasConversions()) bc++;
-      }
+      var anyDiff = compare(a.anyCount(), b.anyCount());
+      if(anyDiff) return anyDiff;
 
-      if (ac > bc) return 1;
-      if (ac < bc) return -1;
+      var convDiff = compare(a.conversionCount(), b.conversionCount());
+      if(convDiff) return convDiff;
 
       // compare the order per parameter
-      for (i = 0; i < a.params.length; i++) {
+      for (var i = 0; i < a.params.length; i++) {
         var cmp = Param.compare(a.params[i], b.params[i]);
         if (cmp !== 0) {
           return cmp;
@@ -590,17 +562,19 @@
     };
 
     /**
-     * Test whether any of the signatures parameters has conversions
-     * @return {boolean} Returns true when any of the parameters contains
-     *                   conversions.
+     * Count the number of 'any' parameters in this signature
+     * @return {number} Returns the number of wildcard parameters
      */
-    Signature.prototype.hasConversions = function () {
-      for (var i = 0; i < this.params.length; i++) {
-        if (this.params[i].hasConversions()) {
-          return true;
-        }
-      }
-      return false;
+    Signature.prototype.anyCount = function () {
+      return this.params.filter(function(p) { return p.anyType; }).length;
+    };
+
+    /**
+     * Count the number of parameters in this signature with at least one conversion
+     * @return {number} Returns the number of parameters with conversions
+     */
+    Signature.prototype.conversionCount = function () {
+      return this.params.filter(function(p) { return p.hasConversions(); }).length;
     };
 
     /**
@@ -932,7 +906,7 @@
 
       for (var i = 0; i < signatures.length; i++) {
         var signature = signatures[i];
-        if (signature.fn && !signature.hasConversions()) {
+        if (signature.fn && !signature.conversionCount()) {
           var params = signature.params.join(',');
           normalized[params] = signature.fn;
         }
@@ -993,6 +967,8 @@
           .concat({ param: remainder, signatures: [signature] })
           .filter(function(entry) { return entry.param.types.length; });
       }
+
+      entries.sort(function(a, b) { return Param.compare(a.param, b.param); });
 
       // parse the childs
       var childs = new Array(entries.length);
@@ -1129,6 +1105,16 @@
      */
     function contains(array, entry) {
       return array.indexOf(entry) !== -1;
+    }
+
+    /**
+     * Compare two numeric types
+     * @param {number|boolean} a
+     * @param {number|boolean} b
+     * @return {number} Returns the comparison result.
+     */
+    function compare(a, b) {
+      return a > b ? 1 : (a < b ? -1 : 0);
     }
 
     // data type tests
