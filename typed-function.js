@@ -965,10 +965,9 @@
           }];
         }).reduce(function(a, b) { return a.concat(b); }, [])
           .concat({ param: remainder, signatures: [signature] })
-          .filter(function(entry) { return entry.param.types.length; });
+          .filter(function(entry) { return entry.param.types.length; })
+          .sort(function(a, b) { return Param.compare(a.param, b.param); });
       }
-
-      entries.sort(function(a, b) { return Param.compare(a.param, b.param); });
 
       // parse the childs
       var childs = new Array(entries.length);
