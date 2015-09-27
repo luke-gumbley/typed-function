@@ -112,11 +112,12 @@ describe('any type', function () {
       }
     });
 
+    assert.equal(fn([]), 'any');
     assert.equal(fn([], 'foo'), 'Array,string');
+    assert.equal(fn([],'foo','bar'), 'any');
     assert.equal(fn('string'), 'any');
     assert.equal(fn(2), 'any');
     assert.equal(fn(2,3,4), 'any');
-    assert.equal(fn([]), 'any');
     assert.throws(function () {fn()}, /TypeError: Too few arguments in function unnamed \(expected: Array or any, index: 0\)/);
   });
 
