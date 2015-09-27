@@ -775,8 +775,15 @@
       var code = [];
       var i;
 
-      if (this.signature && !this.signature.varArgs) {
+      if (this.signature && (!this.signature.varArgs || !this.childs.length || !this.childs[0].param.varArgs)) {
         code.push(prefix + 'if (arguments.length === ' + this.path.length + ') {');
+        if(this.signature.varArgs) {
+          var args = []
+          for (var i = this.param.index; i < this.path.length; i++) {
+            args.push('arg' + i);
+          }
+          code.push(prefix + '  var varArgs = [' + args.join(',') + '];');
+        }
         code.push(this.signature.toCode(refs, prefix + '  '));
         code.push(prefix + '}');
       }
@@ -940,17 +947,26 @@
         }
       }
 
-      var extrapolated = filtered.every(function(signature) { return signature.params.length < index; });
-      // stop if every remaining signature has varArgs and is beyond its minimum length
-      if(extrapolated && filtered.length === signatures.length)
+      // don't recurse into varArgs paths
+      if(path.length && path[index - 1].varArgs)
         filtered = [];
 
       // recurse over the signatures
       var entries = [];
+      var any = [];
       for (i = 0; i < filtered.length; i++) {
         signature = filtered[i];
         // group signatures with compatible params at current index
         var param = signature.getParam(index);
+
+        if(param.anyType) {
+          entries.forEach(function(entry) { entry.signatures.push(signature); });
+          if(param.varArgs)
+            entries.push({ param: param, signatures: [signature] });
+          else
+            any.push(signature);
+          continue;
+        }
 
         var remainder = param;
 
@@ -964,17 +980,15 @@
             signatures: entry.signatures.concat(signature)
           }];
         }).reduce(function(a, b) { return a.concat(b); }, [])
-          .concat({ param: remainder, signatures: [signature] })
-          .filter(function(entry) { return entry.param.types.length; })
-          .sort(function(a, b) { return Param.compare(a.param, b.param); });
+          .concat({ param: remainder, signatures: any.concat(signature) })
+          .filter(function(entry) { return entry.param.types.length; });
       }
 
-      // parse the childs
-      var childs = new Array(entries.length);
-      for (i = 0; i < entries.length; i++) {
-        var entry = entries[i];
-        childs[i] = parseTree(entry.signatures, path.concat(entry.param))
-      }
+      if(any.length) entries.push({ param: new Param('any', [], index, false), signatures: any })
+
+      var childs = entries
+        .sort(function(a, b) { return Param.compare(a.param, b.param); })
+        .map(function(entry) { return parseTree(entry.signatures, path.concat(entry.param)); });
 
       return new Node(path, nodeSignature, childs);
     }
