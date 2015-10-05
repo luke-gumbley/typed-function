@@ -121,6 +121,34 @@
   }
   console.timeEnd('invoke3');
 
+  typed.conversions = [
+    {from: 'number',  to: 'string', convert: function (x) {return x + '';}},
+  ];
+
+  typed.count = {};
+
+  typed.types.forEach(function(type) {
+    var test = type.test;
+    var name = type.name;
+    type.test = function(x) { typed.count[name] = (typed.count[name] || 0) + 1; return test(x); };
+  });
+
+  var fn = typed({
+    'string,any,boolean|number,...string|boolean': function () {},
+    'string,Array,...number|boolean': function () {},
+    'number,any,number|string': function () {},
+    'any,number|string': function () {},
+  });
+
+  fn('',2,2,true);
+
+  console.log('LOC: ' + fn.toString().split('\n').length);
+
+  console.log('Type checks:');
+  typed.types
+    .map(function(type) { return type.name; })
+    .filter(function(type) { return typed.count[type]; })
+    .forEach(function(type) {console.log(type, ' ', typed.count[type]); });
 
 </script>
 </body>

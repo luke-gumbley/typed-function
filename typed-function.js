@@ -226,6 +226,10 @@
         throw new Error('String or Array expected');
       }
 
+      // sort types (necessary for testable error messages)
+      var types = typed.types.map(function(t) { return t.name; });
+      this.types.sort(function(a, b) { return compare(types.indexOf(a),types.indexOf(b)); });
+
       // can hold types to which to convert when handling this parameter
       this.conversions = conversions;
 
@@ -421,6 +425,15 @@
       this.params = new Array(_params.length);
       for (var i = 0; i < _params.length; i++) {
         var param = new Param(_params[i], [], i);
+
+        // find and add conversions for the parameter
+        typed.conversions.forEach(function(conversion) {
+          if (!contains(param.types, conversion.from) && contains(param.types, conversion.to)) {
+            param.types.push(conversion.from);
+            param.conversions.push(conversion);
+          }
+        });
+
         this.params[i] = param;
         if (i === _params.length - 1) {
           // the last argument
@@ -462,70 +475,6 @@
      */
     Signature.prototype.compatibleLength = function(length) {
       return length === this.params.length || this.varArgs && length > this.params.length;
-    };
-
-    /**
-     * Create a clone of this signature
-     * @returns {Signature} Returns a cloned version of this signature
-     */
-    Signature.prototype.clone = function () {
-      return new Signature(this.params.slice(), this.fn);
-    };
-
-    /**
-     * Expand a signature: split params with union types in separate signatures
-     * For example split a Signature "string | number" into two signatures.
-     * @return {Signature[]} Returns an array with signatures (at least one)
-     */
-    Signature.prototype.expand = function () {
-      var signatures = [];
-
-      function recurse(signature, path) {
-        if (path.length < signature.params.length) {
-          var i, newParam, conversion;
-
-          var param = signature.params[path.length];
-          if (param.varArgs) {
-            // a variable argument. do not split the types in the parameter
-            newParam = param.clone();
-
-            // add conversions to the parameter
-            // recurse for all conversions
-            for (i = 0; i < typed.conversions.length; i++) {
-              conversion = typed.conversions[i];
-              if (!contains(param.types, conversion.from) && contains(param.types, conversion.to)) {
-                var j = newParam.types.length;
-                newParam.types[j] = conversion.from;
-                newParam.conversions[j] = conversion;
-              }
-            }
-
-            recurse(signature, path.concat(newParam));
-          }
-          else {
-            // split each type in the parameter
-            for (i = 0; i < param.types.length; i++) {
-              recurse(signature, path.concat(new Param(param.types[i], [], param.index)));
-            }
-
-            // recurse for all conversions
-            for (i = 0; i < typed.conversions.length; i++) {
-              conversion = typed.conversions[i];
-              if (!contains(param.types, conversion.from) && contains(param.types, conversion.to)) {
-                newParam = new Param(conversion.from, [conversion], param.index);
-                recurse(signature, path.concat(newParam));
-              }
-            }
-          }
-        }
-        else {
-          signatures.push(new Signature(path, signature.fn));
-        }
-      }
-
-      recurse(this, []);
-
-      return signatures;
     };
 
     /**
@@ -847,49 +796,16 @@
      * @return {Signature[]} Returns an array with expanded signatures
      */
     function parseSignatures(rawSignatures) {
-      // FIXME: need to have deterministic ordering of signatures, do not create via object
-      var signature;
-      var keys = {};
       var signatures = [];
-      var i;
 
       for (var types in rawSignatures) {
         if (rawSignatures.hasOwnProperty(types)) {
           var fn = rawSignatures[types];
-          signature = new Signature(types, fn);
+          var signature = new Signature(types, fn);
 
-          if (signature.ignore()) {
-            continue;
+          if (!signature.ignore()) {
+            signatures.push(signature);
           }
-
-          var expanded = signature.expand();
-
-          for (i = 0; i < expanded.length; i++) {
-            var signature_i = expanded[i];
-            var key = signature_i.toString();
-            var existing = keys[key];
-            if (!existing) {
-              keys[key] = signature_i;
-            }
-            else {
-              var cmp = Signature.compare(signature_i, existing);
-              if (cmp < 0) {
-                // override if sorted first
-                keys[key] = signature_i;
-              }
-              else if (cmp === 0) {
-                throw new Error('Signature "' + key + '" is defined twice');
-              }
-              // else: just ignore
-            }
-          }
-        }
-      }
-
-      // convert from map to array
-      for (key in keys) {
-        if (keys.hasOwnProperty(key)) {
-          signatures.push(keys[key]);
         }
       }
 
